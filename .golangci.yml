@@ -1,0 +1,30 @@
+run:
+  timeout: 3m
+  tests: true
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - gofmt
+    - goimports
+    - ineffassign
+    - errcheck
+    - gosimple
+    - unused
+  disable:
+    # 学習初期は厳しすぎる系は一旦OFF
+    - gocyclo
+    - dupl
+    - exhaustive
+    - lll
+
+issues:
+  exclude-use-default: false
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
+# goimports のために module 名が必要な場合はここで補助可
+# 例:
+# go:
+#   modules-download-mode: readonly
