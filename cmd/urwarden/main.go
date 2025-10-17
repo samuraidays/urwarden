@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/samuraidays/urwarden/internal/parse"  // URLの分解・正規化
 	"github.com/samuraidays/urwarden/internal/rules"  // 判定ルール（blocklistやTLDなど）
 	"github.com/samuraidays/urwarden/internal/score"  // スコア集計とラベル付け
+	"github.com/samuraidays/urwarden/internal/version"
 )
 
 const (
@@ -18,16 +20,27 @@ const (
 )
 
 func main() {
+	var showVersion bool
+	flag.BoolVar(&showVersion, "version", false, "show version and exit")
+	flag.Parse()
+
+	if showVersion {
+		fmt.Printf("urwarden %s (commit %s, date %s, build %s)\n",
+			version.Version, version.Commit, version.BuildDate, version.BuildNumber)
+		os.Exit(exitOK)
+	}
+
+	args := flag.Args()
 	// os.Args にはコマンドライン引数が格納されている。
 	// 例: 「urwarden https://example.com」
-	if len(os.Args) < 2 {
+	if len(args) < 1 {
 		// 引数が足りない場合はエラーを表示して終了
 		fmt.Fprintln(os.Stderr, "Usage: urwarden <URL>")
 		os.Exit(exitInput)
 	}
 
 	// 引数の1つ目をURLとして取得
-	inputURL := os.Args[1]
+	inputURL := args[0]
 
 	// -------------------------------
 	// 1) URLをパースして正規化
