@@ -29,7 +29,11 @@ help:
 	@echo "  make lint      - run golangci-lint"
 	@echo "  make fmt       - gofmt/goimports via golangci-lint --fix"
 	@echo "  make version   - print resolved version strings"
-	@echo "  make blocklist - update blocklist"
+	@echo "  make blocklist - update blocklist with signature verification"
+	@echo "  make blocklist-force - force update blocklist even if no changes"
+	@echo "  make blocklist-skip-verify - update blocklist without signature verification"
+	@echo "  make blocklist-verify - verify blocklist signature and checksum"
+	@echo "  make blocklist-clean - clean blocklist files"
 	@echo "  make clean     - remove build artifacts"
 
 # ---- Meta ----
@@ -67,7 +71,37 @@ fmt:
 
 .PHONY: blocklist
 blocklist:
+	@echo "Updating blocklist with signature verification..."
 	go run ./cmd/fetch-blocklist
+
+.PHONY: blocklist-force
+blocklist-force:
+	@echo "Force updating blocklist..."
+	go run ./cmd/fetch-blocklist --force
+
+.PHONY: blocklist-skip-verify
+blocklist-skip-verify:
+	@echo "Updating blocklist without signature verification..."
+	go run ./cmd/fetch-blocklist --skip-verify
+
+.PHONY: blocklist-verify
+blocklist-verify:
+	@echo "Verifying blocklist signature and checksum..."
+	@if [ -f data/blocklist.txt.asc ]; then \
+		gpg --verify data/blocklist.txt.asc data/blocklist.txt; \
+	else \
+		echo "No signature file found"; \
+	fi
+	@if [ -f data/blocklist.txt.sha256 ]; then \
+		cd data && sha256sum -c blocklist.txt.sha256; \
+	else \
+		echo "No checksum file found"; \
+	fi
+
+.PHONY: blocklist-clean
+blocklist-clean:
+	@echo "Cleaning blocklist files..."
+	rm -f data/blocklist.txt data/blocklist.txt.sha256 data/blocklist.txt.asc data/blocklist.txt.backup
 
 # ---- Clean ----
 .PHONY: clean

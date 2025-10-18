@@ -140,13 +140,46 @@ malicious.test
 
 ## Building Blocklist
 
-Use the included tool to fetch and build a blocklist from StevenBlack/hosts:
+Use the included tool to fetch and build a blocklist from StevenBlack/hosts with signature verification:
 
 ```bash
-go run ./cmd/fetch-blocklist
+# Update blocklist with signature verification
+make blocklist
+
+# Force update even if no changes detected
+make blocklist-force
+
+# Update without signature verification
+make blocklist-skip-verify
+
+# Verify existing blocklist signature and checksum
+make blocklist-verify
+
+# Clean blocklist files
+make blocklist-clean
 ```
 
-This will download the latest blocklist and save it to `data/blocklist.txt`.
+Or use the tool directly:
+
+```bash
+# Basic update
+go run ./cmd/fetch-blocklist
+
+# Skip signature verification
+go run ./cmd/fetch-blocklist --skip-verify
+
+# Force update
+go run ./cmd/fetch-blocklist --force
+
+# Disable backup
+go run ./cmd/fetch-blocklist --backup=false
+```
+
+This will download the latest blocklist and save it to `data/blocklist.txt` with:
+- SHA256 checksum verification
+- GPG signature generation (if GPG is available)
+- Automatic backup of existing files
+- Change detection to avoid unnecessary updates
 
 ## Exit Codes
 
