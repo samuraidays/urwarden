@@ -63,10 +63,14 @@ func EvaluateAll(n model.NormalizedURL, blocklistPath string) []model.Reason {
 	// -------------------------------
 	// ローカルのブロックリストファイルに該当ドメインが載っていれば +70。
 	if hit := blocklistHit(n.Host, blocklistPath); hit != "" {
+		detail := hit
+		if n.Host != hit && strings.HasSuffix(n.Host, "."+hit) {
+			detail = "matched subdomain of " + hit
+		}
 		reasons = append(reasons, model.Reason{
 			Rule:   RuleBlocklistHit,
 			Weight: WeightBlocklistHit,
-			Detail: hit, // どのドメインが一致したか
+			Detail: detail, // どのドメインが一致したか
 		})
 	}
 
@@ -153,6 +157,12 @@ func blocklistHit(host string, blocklistPath string) string {
 		// 完全一致で比較（サブドメインは v0.1 では無視）。
 		if dom == host {
 			return dom // 一致したら即リターン
+		}
+		// サブドメイン一致（例: host=sub.bad.example.com, dom=example.com）
+		if strings.HasSuffix(host, "."+dom) {
+			// 返却値の書式は好みでOK。ここではわかりやすく prefix を付けない。
+			// detail に "matched subdomain of <dom>" を出したい場合は呼び出し側で整形してもよい。
+			return dom
 		}
 	}
 
