@@ -36,7 +36,7 @@ func FromArgsOrInput(args []string, path string, cfg *config.Config) ([]string, 
 		r = f
 		defer func() {
 			if err := r.Close(); err != nil {
-				logger.Warn("failed to close file: %v", err)
+				logger.Debug("failed to close file: %v", err)
 			}
 		}()
 	}

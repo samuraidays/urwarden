@@ -51,7 +51,7 @@ func (b *Blocklist) Load() error {
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			logger.Warn("failed to close blocklist file: %v", err)
+			logger.Debug("failed to close blocklist file: %v", err)
 		}
 	}()
 
@@ -93,7 +93,7 @@ func (b *Blocklist) Load() error {
 		return fmt.Errorf("error reading blocklist: %w", err)
 	}
 
-	logger.Info("loaded %d domains from blocklist (%d lines processed)", domainCount, lineCount)
+	logger.Debug("loaded %d domains from blocklist (%d lines processed)", domainCount, lineCount)
 	return nil
 }
 

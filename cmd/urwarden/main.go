@@ -65,14 +65,20 @@ func main() {
 	// Set up logging
 	if cfg.Verbose {
 		logger.Default.SetLevel(logger.LevelDebug)
+		logger.Info("starting urwarden v%s", version.Version)
+	} else {
+		// Disable all logging when not verbose
+		logger.Default.SetLevel(logger.LevelError + 1)
 	}
-
-	logger.Info("starting urwarden v%s", version.Version)
 
 	// Collect URLs from command line arguments or input file
 	urls, err := input.FromArgsOrInput(flag.Args(), infile, cfg)
 	if err != nil {
-		logger.Error("failed to collect URLs: %v", err)
+		if cfg.Verbose {
+			logger.Error("failed to collect URLs: %v", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "failed to collect URLs: %v\n", err)
+		}
 		os.Exit(exitInput)
 	}
 
@@ -81,12 +87,18 @@ func main() {
 		os.Exit(exitInput)
 	}
 
-	logger.Info("processing %d URLs", len(urls))
+	if cfg.Verbose {
+		logger.Info("processing %d URLs", len(urls))
+	}
 
 	// Initialize rule evaluator
 	evaluator, err := rules.NewEvaluator(cfg.BlocklistPath, cfg)
 	if err != nil {
-		logger.Error("failed to initialize rule evaluator: %v", err)
+		if cfg.Verbose {
+			logger.Error("failed to initialize rule evaluator: %v", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "failed to initialize rule evaluator: %v\n", err)
+		}
 		os.Exit(exitInternal)
 	}
 
@@ -95,12 +107,18 @@ func main() {
 	processedCount := 0
 
 	for _, inputURL := range urls {
-		logger.Debug("processing URL: %s", inputURL)
+		if cfg.Verbose {
+			logger.Debug("processing URL: %s", inputURL)
+		}
 
 		// Parse and normalize URL
 		norm, err := parse.NormalizeURL(inputURL)
 		if err != nil {
-			logger.Warn("failed to normalize URL %s: %v", inputURL, err)
+			if cfg.Verbose {
+				logger.Warn("failed to normalize URL %s: %v", inputURL, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to normalize URL %s: %v\n", inputURL, err)
+			}
 			hadInputError = true
 			continue
 		}
@@ -113,18 +131,26 @@ func main() {
 
 		// Output result as JSON
 		if err := output.WriteResultJSON(inputURL, norm, total, label, reasons); err != nil {
-			logger.Error("failed to write JSON output: %v", err)
+			if cfg.Verbose {
+				logger.Error("failed to write JSON output: %v", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to write JSON output: %v\n", err)
+			}
 			os.Exit(exitInternal)
 		}
 
 		processedCount++
 	}
 
-	logger.Info("processed %d URLs successfully", processedCount)
+	if cfg.Verbose {
+		logger.Info("processed %d URLs successfully", processedCount)
+	}
 
 	// Exit with appropriate code
 	if hadInputError {
-		logger.Warn("some URLs could not be processed")
+		if cfg.Verbose {
+			logger.Warn("some URLs could not be processed")
+		}
 		os.Exit(exitInput)
 	}
 
