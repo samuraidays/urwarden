@@ -1,48 +1,48 @@
 package score
 
-import "github.com/samuraidays/urwarden/internal/model"
+import (
+	"github.com/samuraidays/urwarden/internal/config"
+	"github.com/samuraidays/urwarden/internal/logger"
+	"github.com/samuraidays/urwarden/internal/model"
+)
 
-// ------------------------------------------------------
-// このファイルは「スコア計算とラベル判定」を担当するパッケージ。
-// 各ルール（blocklist, TLD, pathなど）で得た加点を合計し、
-// 合計値に応じて「安全／疑わしい／悪意あり」を分類する。
-// ------------------------------------------------------
+// This package handles score calculation and label determination.
+// It aggregates weights from various rules (blocklist, TLD, path, etc.)
+// and classifies URLs as "benign", "suspicious", or "malicious" based on the total score.
 
-// Aggregate は、reasons（検出理由一覧）を受け取り、
-// それぞれの Weight（加点値）を合計して「総スコア」と「ラベル」を返す。
+// Aggregate calculates the total score from reasons and determines the appropriate label
 //
-// 返り値:
-//   - int: 合計スコア（例: 80）
-//   - string: ラベル文字列（"benign" / "suspicious" / "malicious"）
-func Aggregate(reasons []model.Reason) (int, string) {
-	total := 0 // 合計スコアを格納する変数
+// Returns:
+//   - int: total score (e.g., 80)
+//   - string: label string ("benign" / "suspicious" / "malicious")
+func Aggregate(reasons []model.Reason, cfg *config.Config) (int, string) {
+	total := 0
 
-	// reasons の中には各ルールで検出された項目が入っている。
-	// たとえば:
-	//   [{rule:blocklist_hit, weight:70}, {rule:path_has_login_like, weight:10}]
-	// それぞれの weight を足し合わせて総スコアを出す。
+	// Sum up all the weights from the detected rules
+	// Example: [{rule:blocklist_hit, weight:70}, {rule:path_has_login_like, weight:10}]
 	for _, r := range reasons {
 		total += r.Weight
+		logger.Debug("added %d points for rule %s: %s", r.Weight, r.Rule, r.Detail)
 	}
 
-	// スコアに応じたラベル（判定結果）を求める
-	label := labelOf(total)
+	// Determine label based on score thresholds
+	label := labelOf(total, cfg)
 
+	logger.Debug("total score: %d, label: %s", total, label)
 	return total, label
 }
 
-// labelOf は、数値スコアを受け取り、
-// その値に応じて3段階のラベルを返す単純な判定関数。
+// labelOf determines the appropriate label based on the score and configuration
 //
-// スコアの基準（v0.1仕様）:
-//   - 70点以上 → "malicious"（悪意あり）
-//   - 30点以上 → "suspicious"（疑わしい）
-//   - それ未満 → "benign"（安全）
-func labelOf(score int) string {
+// Score thresholds:
+//   - >= malicious_threshold → "malicious"
+//   - >= suspicious_threshold → "suspicious"
+//   - < suspicious_threshold → "benign"
+func labelOf(score int, cfg *config.Config) string {
 	switch {
-	case score >= 70:
+	case score >= cfg.MaliciousThreshold:
 		return "malicious"
-	case score >= 30:
+	case score >= cfg.SuspiciousThreshold:
 		return "suspicious"
 	default:
 		return "benign"

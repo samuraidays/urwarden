@@ -5,74 +5,70 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/samuraidays/urwarden/internal/logger"
 	"github.com/samuraidays/urwarden/internal/model"
+	"github.com/samuraidays/urwarden/internal/utils"
 )
 
-// ---------------------------
-// このファイルは URL の解析（Parse）と正規化（Normalize）を行うモジュール。
-// 入力されたURL文字列を、scheme / host / tld / path / query に分解して
-// 構造体 model.NormalizedURL として返す。
-// ---------------------------
+// This package handles URL parsing and normalization.
+// It takes a URL string and breaks it down into scheme/host/tld/path/query
+// components, returning a model.NormalizedURL struct.
 
-// 想定外のURLスキームを検出したときに返すエラー（例: ftp:// など）
+// ErrInvalidScheme is returned when an unsupported URL scheme is detected
 var ErrInvalidScheme = errors.New("invalid scheme: only http/https are allowed")
 
-// ホスト名が存在しない場合のエラー（例: https:// だけなど）
+// ErrNoHost is returned when the hostname is empty
 var ErrNoHost = errors.New("invalid url: host is empty")
 
-// NormalizeURL は、文字列URLをパースして構造体にまとめる関数。
-// 仕様（v0.1）では http と https 以外はエラー。
-// 返り値: 正常時 → NormalizedURL構造体, 失敗時 → エラー。
+// NormalizeURL parses a URL string and returns a normalized URL struct.
+// Only http and https schemes are allowed.
+// Returns: NormalizedURL struct on success, error on failure.
 func NormalizeURL(input string) (model.NormalizedURL, error) {
+	logger.Debug("normalizing URL: %s", input)
 
-	// Go標準の url.Parse を使ってURLを構造体に分解。
-	// エラー例：不正な文字やスキームがない場合など。
+	// Use Go's standard url.Parse to break down the URL
 	u, err := url.Parse(input)
 	if err != nil {
+		logger.Debug("failed to parse URL: %v", err)
 		return model.NormalizedURL{}, err
 	}
 
-	// scheme（http / https）を小文字化して取得
+	// Normalize scheme to lowercase
 	scheme := strings.ToLower(u.Scheme)
 
-	// 許可されるスキームは http / https のみ。
-	// それ以外（ftp, file など）は無効。
-	if scheme != "http" && scheme != "https" {
+	// Only allow http and https schemes
+	if !utils.IsValidURLScheme(scheme) {
+		logger.Debug("invalid scheme: %s", scheme)
 		return model.NormalizedURL{}, ErrInvalidScheme
 	}
 
-	// ホスト部分（例: "Bad.Example.com"）を小文字化して取得。
-	// strings.Trim で先頭と末尾のドットを除去（"example.com." → "example.com"）
+	// Normalize hostname to lowercase and trim dots
 	host := strings.ToLower(strings.Trim(u.Hostname(), "."))
 
-	// ホスト名が空（例: "https://" のような入力）はエラー。
+	// Hostname cannot be empty
 	if host == "" {
+		logger.Debug("empty hostname")
 		return model.NormalizedURL{}, ErrNoHost
 	}
 
-	// -------------------------------
-	// v0.1仕様：シンプルなTLD抽出
-	// -------------------------------
-	// 例: host = "bad.example.com" → tld = "com"
-	// ドメイン名の最後の "." 以降を取り出すだけの単純ルール。
+	// Extract TLD (simple rule: everything after the last dot)
 	tld := host
 	if i := strings.LastIndex(host, "."); i >= 0 && i+1 < len(host) {
 		tld = host[i+1:]
 	}
 
-	// パス部分（"/login" など）を取得。
-	// EscapedPath() は特殊文字（例: スペース）を %20 形式に変換してくれる。
+	// Get path and query components
 	path := u.EscapedPath()
-
-	// クエリ部分（"next=%2Fhome" など）を取得。
 	query := u.RawQuery
 
-	// 正規化されたURL情報を model.NormalizedURL 構造体にまとめて返す。
-	return model.NormalizedURL{
+	result := model.NormalizedURL{
 		Scheme: scheme,
 		Host:   host,
 		TLD:    tld,
 		Path:   path,
 		Query:  query,
-	}, nil
+	}
+
+	logger.Debug("normalized URL: %+v", result)
+	return result, nil
 }

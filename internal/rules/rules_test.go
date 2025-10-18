@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samuraidays/urwarden/internal/config"
 	"github.com/samuraidays/urwarden/internal/model"
 	"github.com/samuraidays/urwarden/internal/rules"
 )
@@ -21,13 +22,18 @@ func tempBlocklist(t *testing.T, lines string) string {
 }
 
 func TestBlocklistHit(t *testing.T) {
+	cfg := config.Default()
 	bl := tempBlocklist(t, `
 # comment
 0.0.0.0 bad.example.com
 malicious.test
 `)
+	evaluator, err := rules.NewEvaluator(bl, cfg)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
 	n := model.NormalizedURL{Host: "bad.example.com", TLD: "com"}
-	rs := rules.EvaluateAll(n, bl)
+	rs := evaluator.EvaluateAll(n)
 
 	found := false
 	for _, r := range rs {
@@ -42,8 +48,13 @@ malicious.test
 }
 
 func TestSuspiciousTLD(t *testing.T) {
+	cfg := config.Default()
+	evaluator, err := rules.NewEvaluator("", cfg)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
 	n := model.NormalizedURL{Host: "foo.shop", TLD: "shop"}
-	rs := rules.EvaluateAll(n, "")
+	rs := evaluator.EvaluateAll(n)
 	ok := false
 	for _, r := range rs {
 		if r.Rule == rules.RuleSuspiciousTLD && r.Detail == "shop" {
@@ -56,8 +67,13 @@ func TestSuspiciousTLD(t *testing.T) {
 }
 
 func TestPathHasLoginLike(t *testing.T) {
+	cfg := config.Default()
+	evaluator, err := rules.NewEvaluator("", cfg)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
 	n := model.NormalizedURL{Path: "/user/login", Query: "next=%2Fhome"}
-	rs := rules.EvaluateAll(n, "")
+	rs := evaluator.EvaluateAll(n)
 	ok := false
 	for _, r := range rs {
 		if r.Rule == rules.RulePathHasLoginLike {
@@ -70,8 +86,13 @@ func TestPathHasLoginLike(t *testing.T) {
 }
 
 func TestNoBlocklistFileIsOK(t *testing.T) {
+	cfg := config.Default()
+	evaluator, err := rules.NewEvaluator("data/does-not-exist.txt", cfg)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
 	n := model.NormalizedURL{Host: "none.example", TLD: "example"}
-	rs := rules.EvaluateAll(n, "data/does-not-exist.txt")
+	rs := evaluator.EvaluateAll(n)
 	// 圧倒的に重要なのは「パニックしない」こと。ここでは理由が0個でもOK。
 	if rs == nil {
 		t.Fatalf("reasons should be empty slice, not nil")
@@ -79,11 +100,16 @@ func TestNoBlocklistFileIsOK(t *testing.T) {
 }
 
 func TestBlocklist_SubdomainMatch(t *testing.T) {
+	cfg := config.Default()
 	bl := tempBlocklist(t, `
 example.com
 `)
+	evaluator, err := rules.NewEvaluator(bl, cfg)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
 	n := model.NormalizedURL{Host: "sub.bad.example.com", TLD: "com"}
-	rs := rules.EvaluateAll(n, bl)
+	rs := evaluator.EvaluateAll(n)
 
 	found := false
 	for _, r := range rs {
@@ -104,11 +130,16 @@ example.com
 }
 
 func TestBlocklist_NoFalsePositive_SimilarSuffix(t *testing.T) {
+	cfg := config.Default()
 	bl := tempBlocklist(t, `
 example.com
 `)
+	evaluator, err := rules.NewEvaluator(bl, cfg)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
 	n := model.NormalizedURL{Host: "reallybadexample.com", TLD: "com"}
-	rs := rules.EvaluateAll(n, bl)
+	rs := evaluator.EvaluateAll(n)
 
 	for _, r := range rs {
 		if r.Rule == rules.RuleBlocklistHit {
@@ -118,11 +149,16 @@ example.com
 }
 
 func TestBlocklist_ExactMatchStillWorks(t *testing.T) {
+	cfg := config.Default()
 	bl := tempBlocklist(t, `
 bad.example.com
 `)
+	evaluator, err := rules.NewEvaluator(bl, cfg)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
 	n := model.NormalizedURL{Host: "bad.example.com", TLD: "com"}
-	rs := rules.EvaluateAll(n, bl)
+	rs := evaluator.EvaluateAll(n)
 	found := false
 	for _, r := range rs {
 		if r.Rule == rules.RuleBlocklistHit && r.Detail != "" {

@@ -6,22 +6,27 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/samuraidays/urwarden/internal/config"
+	"github.com/samuraidays/urwarden/internal/logger"
+	"github.com/samuraidays/urwarden/internal/utils"
 )
 
-// FromArgsOrInput は、(1) --input で指定されたファイル/STDIN からURLを読み込む
-// か、(2) 位置引数(args) のURLを使います。
-// - path == "" の場合は args をそのまま返す
-// - path == "-" の場合は STDIN から読む
-// - ファイルは1行1URL。空行・#コメント行はスキップ
-func FromArgsOrInput(args []string, path string) ([]string, error) {
+// FromArgsOrInput reads URLs from either command line arguments or input file/STDIN
+// - path == "" uses command line arguments
+// - path == "-" reads from STDIN
+// - otherwise reads from the specified file
+// Empty lines and lines starting with # are skipped
+func FromArgsOrInput(args []string, path string, cfg *config.Config) ([]string, error) {
 	if strings.TrimSpace(path) == "" {
-		// 単発/複数の位置引数をそのまま利用
-		// 例: urwarden https://a https://b
-		return dedupe(args), nil
+		// Use command line arguments directly
+		// Example: urwarden https://a https://b
+		return utils.Dedupe(args), nil
 	}
+
 	var r io.ReadCloser
 	if path == "-" {
-		// 標準入力
+		// Read from STDIN
 		r = os.Stdin
 	} else {
 		f, err := os.Open(path)
@@ -29,13 +34,17 @@ func FromArgsOrInput(args []string, path string) ([]string, error) {
 			return nil, fmt.Errorf("open %s: %w", path, err)
 		}
 		r = f
-		defer func() { _ = r.Close() }()
+		defer func() {
+			if err := r.Close(); err != nil {
+				logger.Warn("failed to close file: %v", err)
+			}
+		}()
 	}
+
 	sc := bufio.NewScanner(r)
-	// 長い行でもある程度読めるようにバッファ拡張（必要に応じて調整）
-	const maxLine = 1024 * 1024
-	buf := make([]byte, 0, 64*1024)
-	sc.Buffer(buf, maxLine)
+	// Expand buffer for long lines
+	buf := make([]byte, 0, cfg.BufferSize)
+	sc.Buffer(buf, cfg.MaxLineLength)
 
 	var out []string
 	for sc.Scan() {
@@ -45,21 +54,11 @@ func FromArgsOrInput(args []string, path string) ([]string, error) {
 		}
 		out = append(out, line)
 	}
+
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}
-	return dedupe(out), nil
-}
 
-func dedupe(in []string) []string {
-	seen := make(map[string]struct{}, len(in))
-	var out []string
-	for _, s := range in {
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	return out
+	logger.Debug("read %d URLs from input", len(out))
+	return utils.Dedupe(out), nil
 }
