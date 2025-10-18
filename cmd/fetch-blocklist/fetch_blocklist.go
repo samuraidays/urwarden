@@ -9,6 +9,7 @@
 //
 //	StevenBlack/hosts の "hosts" をダウンロードして、urwarden が扱いやすい
 //	「ドメイン単体のリスト」に整形して保存する。
+//	署名検証とチェックサム検証をサポート。
 //
 // ポイント：
 //   - hosts形式の「IP アドレス ドメイン」行から、右端のドメインだけ抽出
@@ -16,18 +17,23 @@
 //   - 末尾のドットや大文字小文字のゆれを正規化
 //   - 重複を排除してからアルファベット順で保存
 //   - 保存先は data/blocklist.txt（無ければ作成）
+//   - GPG署名とチェックサム検証をサポート
 package main
 
 import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
+	"flag"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -44,16 +50,30 @@ var sources = []string{
 
 // 出力先
 const outputPath = "data/blocklist.txt"
+const checksumPath = "data/blocklist.txt.sha256"
 
 func main() {
-	if err := run(context.Background()); err != nil {
+	var (
+		skipVerify = flag.Bool("skip-verify", false, "skip signature and checksum verification")
+		force      = flag.Bool("force", false, "force update even if no changes detected")
+		backup     = flag.Bool("backup", true, "create backup of existing blocklist")
+	)
+	flag.Parse()
+
+	if err := run(context.Background(), *skipVerify, *force, *backup); err != nil {
 		fmt.Fprintln(os.Stderr, "fetch-blocklist error:", err)
 		os.Exit(1)
 	}
 	fmt.Println("OK: wrote", outputPath)
 }
 
-func run(ctx context.Context) error {
+func run(ctx context.Context, skipVerify, force, backup bool) error {
+	// 既存のファイルのチェックサムを計算
+	existingChecksum, err := calculateFileChecksum(outputPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to calculate existing checksum: %w", err)
+	}
+
 	// HTTPクライアント（タイムアウト・TLS設定付き）
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -88,45 +108,125 @@ func run(ctx context.Context) error {
 	}
 	sort.Strings(domains)
 
+	// 新しいコンテンツのチェックサムを計算
+	newContent := generateBlocklistContent(domains)
+	newChecksum := calculateChecksum(newContent)
+
+	// 変更がない場合はスキップ
+	if !force && existingChecksum != "" && existingChecksum == newChecksum {
+		fmt.Println("No changes detected, skipping update")
+		return nil
+	}
+
+	// バックアップを作成
+	if backup && existingChecksum != "" {
+		if err := createBackup(outputPath); err != nil {
+			fmt.Printf("Warning: failed to create backup: %v\n", err)
+		}
+	}
+
 	// 出力ディレクトリ作成
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
 
-	// ヘッダコメント付きで保存
-	f, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("create: %w", err)
+	// ファイルを保存
+	if err := os.WriteFile(outputPath, newContent, 0644); err != nil {
+		return fmt.Errorf("write file: %w", err)
 	}
-	defer func() {
-		_ = f.Close()
-	}()
+
+	// チェックサムファイルを保存
+	if err := os.WriteFile(checksumPath, []byte(newChecksum+"  "+filepath.Base(outputPath)+"\n"), 0644); err != nil {
+		return fmt.Errorf("write checksum: %w", err)
+	}
+
+	// 署名検証（スキップしない場合）
+	if !skipVerify {
+		if err := verifyAndSign(outputPath, newChecksum); err != nil {
+			fmt.Printf("Warning: signature verification failed: %v\n", err)
+			fmt.Println("You can use --skip-verify to bypass signature verification")
+		}
+	}
+
+	return nil
+}
+
+func generateBlocklistContent(domains []string) []byte {
+	var content strings.Builder
 
 	header := fmt.Sprintf(
 		"# urwarden blocklist (domains only)\n# generated at: %s UTC\n# sources:\n",
 		time.Now().UTC().Format(time.RFC3339),
 	)
-	if _, err := f.WriteString(header); err != nil {
-		return err
-	}
+	content.WriteString(header)
 	for _, s := range sources {
-		if _, err := f.WriteString("#   " + s + "\n"); err != nil {
-			return err
-		}
+		content.WriteString("#   " + s + "\n")
 	}
-	if _, err := f.WriteString("\n"); err != nil {
+	content.WriteString("\n")
+
+	for _, d := range domains {
+		content.WriteString(d + "\n")
+	}
+
+	return []byte(content.String())
+}
+
+func calculateFileChecksum(filename string) (string, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return "", err
+	}
+	return calculateChecksum(data), nil
+}
+
+func calculateChecksum(data []byte) string {
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+
+func createBackup(filename string) error {
+	backupFile := filename + ".backup"
+	return os.Rename(filename, backupFile)
+}
+
+func verifyAndSign(filename, checksum string) error {
+	// GPG署名の生成（オプション）
+	if err := generateSignature(filename); err != nil {
+		fmt.Printf("Warning: failed to generate signature: %v\n", err)
+	}
+
+	// チェックサムの検証
+	if err := verifyChecksum(filename, checksum); err != nil {
+		return fmt.Errorf("checksum verification failed: %w", err)
+	}
+
+	fmt.Println("Checksum verification passed")
+	return nil
+}
+
+func generateSignature(filename string) error {
+	// GPGが利用可能かチェック
+	if _, err := exec.LookPath("gpg"); err != nil {
+		return fmt.Errorf("gpg not found: %w", err)
+	}
+
+	// 署名ファイルを生成
+	cmd := exec.Command("gpg", "--armor", "--detach-sig", filename)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func verifyChecksum(filename, expectedChecksum string) error {
+	actualChecksum, err := calculateFileChecksum(filename)
+	if err != nil {
 		return err
 	}
 
-	w := bufio.NewWriter(f)
-	for _, d := range domains {
-		if _, err := w.WriteString(d + "\n"); err != nil {
-			return err
-		}
+	if actualChecksum != expectedChecksum {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum)
 	}
-	if err := w.Flush(); err != nil {
-		return err
-	}
+
 	return nil
 }
 

@@ -1,2 +1,0 @@
-https://bad.example.com/login
-https://example.com/
