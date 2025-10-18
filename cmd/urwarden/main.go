@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio" // [NEW]
 	"flag"
 	"fmt"
+	"io" // [NEW]
 	"os"
+	"strings" // [NEW]
 
 	// 内部パッケージをインポート
 	"github.com/samuraidays/urwarden/internal/output" // JSON出力
@@ -20,8 +23,28 @@ const (
 )
 
 func main() {
-	var showVersion bool
+	// ---------------------------------
+	// [NEW] フラグ: --input を追加
+	// ---------------------------------
+	var (
+		showVersion bool
+		infile      string
+	)
 	flag.BoolVar(&showVersion, "version", false, "show version and exit")
+	flag.StringVar(&infile, "input", "", "path to file with URLs (one per line). Use '-' for stdin") // [NEW]
+
+	// [NEW] Usageのカスタム
+	flag.CommandLine.SetOutput(os.Stderr)
+	flag.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage:")
+		fmt.Fprintln(os.Stderr, "  urwarden <URL> [<URL> ...] [--input file|-] [--version]")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  urwarden 'https://bad.example.com/login'")
+		fmt.Fprintln(os.Stderr, "  urwarden --input urls.txt")
+		fmt.Fprintln(os.Stderr, "  cat urls.txt | urwarden --input -")
+		fmt.Fprintln(os.Stderr, "Exit codes: 0=ok, 1=internal error, 2=input error")
+	}
+
 	flag.Parse()
 
 	if showVersion {
@@ -30,75 +53,112 @@ func main() {
 		os.Exit(exitOK)
 	}
 
-	args := flag.Args()
-	// os.Args にはコマンドライン引数が格納されている。
-	// 例: 「urwarden https://example.com」
-	if len(args) < 1 {
-		// 引数が足りない場合はエラーを表示して終了
-		fmt.Fprintln(os.Stderr, "Usage: urwarden <URL>")
-		os.Exit(exitInput)
-	}
-
-	// 引数の1つ目をURLとして取得
-	inputURL := args[0]
-
-	// -------------------------------
-	// 1) URLをパースして正規化
-	// -------------------------------
-	// parse.NormalizeURL は、URLを分解して
-	//   scheme (http/https)
-	//   host (ドメイン)
-	//   tld  (トップレベルドメイン)
-	//   path, query
-	// などを整形して返す。
-	norm, err := parse.NormalizeURL(inputURL)
+	// ---------------------------------
+	// [NEW] URLの収集（位置引数 or --input）
+	// ---------------------------------
+	urls, err := collectURLs(flag.Args(), infile)
 	if err != nil {
-		// もし不正なURL（例: ftp://やスキームなし）ならここで終了
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(exitInput)
 	}
-
-	// -------------------------------
-	// 2) 3つのルールを評価
-	// -------------------------------
-	// EvaluateAll は次の3つの簡易ルールを適用して「理由リスト（reasons）」を返す。
-	//   - blocklist_hit: ドメインがブロックリストに載っていれば +70点
-	//   - suspicious_tld: 怪しいTLD（.xyzなど）なら +20点
-	//   - path_has_login_like: パスに "login" 等が含まれていれば +10点
-	// data/blocklist.txt が存在しなくても panic せずにスキップする。
-	reasons := rules.EvaluateAll(norm, "data/blocklist.txt")
-
-	// -------------------------------
-	// 3) スコア集計とラベル判定
-	// -------------------------------
-	// 各ルールの weight を合計してスコアを算出し、
-	// スコアに応じて label を決定する。
-	//   score >= 70 → malicious
-	//   score >= 30 → suspicious
-	//   それ以外   → benign
-	total, label := score.Aggregate(reasons)
-
-	// -------------------------------
-	// 4) JSON形式で結果を出力
-	// -------------------------------
-	// output.WriteResultJSON は結果を構造体にまとめて
-	//   {
-	//     "input_url": "...",
-	//     "normalized": {...},
-	//     "score": 80,
-	//     "label": "malicious",
-	//     "reasons": [...],
-	//     "timestamp": "2025-10-17T00:00:00Z"
-	//   }
-	// のように標準出力へ書き出す。
-	if err := output.WriteResultJSON(inputURL, norm, total, label, reasons); err != nil {
-		// JSON出力に失敗した場合（例: 権限やI/Oエラーなど）
-		fmt.Fprintln(os.Stderr, "failed to write json:", err.Error())
-		os.Exit(exitInternal)
+	if len(urls) == 0 {
+		flag.Usage()
+		os.Exit(exitInput)
 	}
 
-	// -------------------------------
-	// 5) 正常終了
-	// -------------------------------
+	// ---------------------------------
+	// [CHANGED] 複数URLをループ処理（1URL→1行JSON）
+	// ---------------------------------
+	hadInputError := false
+	for _, inputURL := range urls {
+		// 1) URLをパースして正規化
+		norm, perr := parse.NormalizeURL(inputURL)
+		if perr != nil {
+			// このURLはスキップしつつ、最後に exit=2 で終了
+			fmt.Fprintln(os.Stderr, perr.Error())
+			hadInputError = true
+			continue
+		}
+
+		// 2) 3つのルールを評価（blocklistは従来どおり固定パス）
+		reasons := rules.EvaluateAll(norm, "data/blocklist.txt")
+
+		// 3) スコア集計とラベル判定
+		total, label := score.Aggregate(reasons)
+
+		// 4) JSON形式で結果を出力（JSON Lines）
+		if err := output.WriteResultJSON(inputURL, norm, total, label, reasons); err != nil {
+			fmt.Fprintln(os.Stderr, "failed to write json:", err.Error())
+			os.Exit(exitInternal)
+		}
+	}
+
+	// 5) 終了コード（入力エラーが1件でもあれば 2、なければ 0）
+	if hadInputError {
+		os.Exit(exitInput)
+	}
 	os.Exit(exitOK)
+}
+
+// ---------------------------------
+// [NEW] URL収集ヘルパ
+//   - infile == ""  : 位置引数をそのまま利用
+//   - infile == "-" : 標準入力から1行1URLで受け取る
+//   - それ以外     : 指定ファイルから読み込む
+//     空行・#始まりの行は無視／重複は除去
+//
+// ---------------------------------
+func collectURLs(args []string, infile string) ([]string, error) {
+	if strings.TrimSpace(infile) == "" {
+		return dedupe(args), nil
+	}
+
+	var r io.ReadCloser
+	if infile == "-" {
+		r = os.Stdin
+	} else {
+		f, err := os.Open(infile)
+		if err != nil {
+			return nil, fmt.Errorf("open %s: %w", infile, err)
+		}
+		r = f
+		defer func() {
+			if err := r.Close(); err != nil {
+				_ = err // lint対策：v0.1では黙殺
+			}
+		}()
+	}
+
+	sc := bufio.NewScanner(r)
+	// 長い行対策でバッファ拡張（必要に応じて調整）
+	const maxLine = 1024 * 1024
+	buf := make([]byte, 0, 64*1024)
+	sc.Buffer(buf, maxLine)
+
+	var out []string
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("scan: %w", err)
+	}
+	return dedupe(out), nil
+}
+
+// [NEW] 重複除去（順序維持の単純実装）
+func dedupe(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
