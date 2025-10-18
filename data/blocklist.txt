@@ -1,5 +1,5 @@
 # urwarden blocklist (domains only)
-# generated at: 2025-10-18T03:19:23Z UTC
+# generated at: 2025-10-18T03:22:02Z UTC
 # sources:
 #   https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
 

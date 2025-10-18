@@ -3,6 +3,7 @@ package rules_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/samuraidays/urwarden/internal/model"
@@ -74,5 +75,62 @@ func TestNoBlocklistFileIsOK(t *testing.T) {
 	// 圧倒的に重要なのは「パニックしない」こと。ここでは理由が0個でもOK。
 	if rs == nil {
 		t.Fatalf("reasons should be empty slice, not nil")
+	}
+}
+
+func TestBlocklist_SubdomainMatch(t *testing.T) {
+	bl := tempBlocklist(t, `
+example.com
+`)
+	n := model.NormalizedURL{Host: "sub.bad.example.com", TLD: "com"}
+	rs := rules.EvaluateAll(n, bl)
+
+	found := false
+	for _, r := range rs {
+		if r.Rule == rules.RuleBlocklistHit {
+			if r.Weight != rules.WeightBlocklistHit {
+				t.Fatalf("unexpected weight: %d", r.Weight)
+			}
+			// 完全一致ではないが、subdomain一致で当たる想定
+			if !strings.Contains(r.Detail, "example.com") {
+				t.Fatalf("detail must mention example.com: %s", r.Detail)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected blocklist_hit by subdomain match")
+	}
+}
+
+func TestBlocklist_NoFalsePositive_SimilarSuffix(t *testing.T) {
+	bl := tempBlocklist(t, `
+example.com
+`)
+	n := model.NormalizedURL{Host: "reallybadexample.com", TLD: "com"}
+	rs := rules.EvaluateAll(n, bl)
+
+	for _, r := range rs {
+		if r.Rule == rules.RuleBlocklistHit {
+			t.Fatalf("should not match similar suffix without dot-boundary")
+		}
+	}
+}
+
+func TestBlocklist_ExactMatchStillWorks(t *testing.T) {
+	bl := tempBlocklist(t, `
+bad.example.com
+`)
+	n := model.NormalizedURL{Host: "bad.example.com", TLD: "com"}
+	rs := rules.EvaluateAll(n, bl)
+	found := false
+	for _, r := range rs {
+		if r.Rule == rules.RuleBlocklistHit && r.Detail != "" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected blocklist_hit (exact)")
 	}
 }
