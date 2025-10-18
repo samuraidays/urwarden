@@ -29,6 +29,7 @@ help:
 	@echo "  make lint      - run golangci-lint"
 	@echo "  make fmt       - gofmt/goimports via golangci-lint --fix"
 	@echo "  make version   - print resolved version strings"
+	@echo "  make blocklist - update blocklist"
 	@echo "  make clean     - remove build artifacts"
 
 # ---- Meta ----
@@ -64,7 +65,11 @@ fmt:
 	golangci-lint run --fix || true
 	go fmt $(PKG)
 
+.PHONY: blocklist
+blocklist:
+	go run ./cmd/fetch-blocklist
+
 # ---- Clean ----
 .PHONY: clean
 clean:
-	rm -rf $(BIN_DIR) coverage.out coverage.html
+	rm -rf $(BIN_DIR) 
